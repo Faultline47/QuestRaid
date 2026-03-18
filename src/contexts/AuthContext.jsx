@@ -43,20 +43,30 @@ export const AuthProvider = ({ children }) => {
     checkRedirect();
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        // Fetch or Initialize Profile
-        const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-        if (userDoc.exists()) {
-          setUser({ ...currentUser, ...userDoc.data() });
+      try {
+        if (currentUser) {
+          // Fetch or Initialize Profile
+          const userRef = doc(db, "users", currentUser.uid);
+          const userDoc = await getDoc(userRef);
+
+          if (userDoc.exists()) {
+            setUser({ ...currentUser, ...userDoc.data() });
+          } else {
+            const profile = await initializeUserProfile(currentUser);
+            setUser({ ...currentUser, ...profile });
+          }
         } else {
-          // This case handles the rare sync delay where the redirect logic hasn't finished yet
-          const profile = await initializeUserProfile(currentUser);
-          setUser({ ...currentUser, ...profile });
+          setUser(null);
         }
-      } else {
-        setUser(null);
+      } catch (error) {
+        console.error("Auth State Error:", error);
+        // On error with placeholder config, we still allow the session to proceed
+        // as a 'local' user for UI demonstration if necessary, but here we'll
+        // just ensure the loading state resolves.
+        setUser(currentUser || null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -64,33 +74,44 @@ export const AuthProvider = ({ children }) => {
 
   const initializeUserProfile = async (firebaseUser) => {
     const userRef = doc(db, "users", firebaseUser.uid);
-    const userDoc = await getDoc(userRef);
 
-    if (!userDoc.exists()) {
-      const initialProfile = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: firebaseUser.displayName,
-        photoURL: firebaseUser.photoURL,
-        role: 'giver', // Default to Giver as per directives
-        xp: 0,
-        level: 1,
-        reputation: 5.0,
-        totalEarned: 0,
-        completedQuests: 0,
-        activeQuestId: null,
-        masteries: [],
-        createdAt: serverTimestamp()
-      };
-      await setDoc(userRef, initialProfile);
-      return initialProfile;
+    const initialProfile = {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email,
+      displayName: firebaseUser.displayName,
+      photoURL: firebaseUser.photoURL,
+      role: 'giver',
+      xp: 0,
+      level: 1,
+      reputation: 5.0,
+      totalEarned: 0,
+      completedQuests: 0,
+      activeQuestId: null,
+      masteries: [],
+      createdAt: serverTimestamp()
+    };
+
+    try {
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) {
+        await setDoc(userRef, initialProfile);
+        return initialProfile;
+      }
+      return userDoc.data();
+    } catch (error) {
+      console.error("Profile Init Error:", error);
+      return initialProfile; // Fallback to local profile if Firestore fails (placeholder config)
     }
-    return userDoc.data();
   };
 
   const login = () => {
-    setSyncing(true);
-    return signInWithRedirect(auth, googleProvider);
+    try {
+      setSyncing(true);
+      return signInWithRedirect(auth, googleProvider);
+    } catch (error) {
+      console.error("Login Error:", error);
+      setSyncing(false);
+    }
   };
 
   const logout = () => {
